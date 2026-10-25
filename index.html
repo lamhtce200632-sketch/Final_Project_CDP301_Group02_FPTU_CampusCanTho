@@ -1,0 +1,106 @@
+<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Giám sát phòng</title>
+<style>
+:root{--bg:#eef2ee;--p:#fff;--ink:#16211b;--mute:#5d6b62;--line:#d3dcd5;--ok:#1f7a4d;--al:#c9302c;--ac:#0f5c6e}
+@media(prefers-color-scheme:dark){:root{--bg:#121a16;--p:#1a2420;--ink:#e8efe9;--mute:#94a39a;--line:#2b3a33;--ok:#4cc38a;--al:#ff6b64;--ac:#5cc0d6}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,sans-serif;padding:14px}
+main{max-width:480px;margin:0 auto}h1{font-size:1.2rem;margin:4px 0 12px}
+.c{background:var(--p);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:12px}.l{color:var(--mute);font-size:.9rem}
+.b{font-size:2.4rem;font-weight:700;line-height:1.1}
+#st{display:block;text-align:center;padding:10px;border-radius:8px;font-weight:700;background:var(--line);color:var(--mute)}
+#st.ok{background:var(--ok);color:#fff}#st.al{background:var(--al);color:#fff}#st.mu{background:var(--line);color:var(--ink)}
+button{font:inherit;border:0;border-radius:8px;background:var(--ac);color:#fff;cursor:pointer}
+button:disabled{opacity:.35}
+#mute{width:100%;margin-top:10px;padding:16px;font-size:1.15rem;background:var(--al)}
+#unmute{width:100%;margin-top:8px;padding:14px;font-size:1.05rem}
+.s{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+.s button{width:56px;height:56px;font-size:1.6rem}.s span{font-size:1.8rem;font-weight:700}
+#mic{width:100%;padding:16px;font-size:1.15rem;background:var(--ink);color:var(--bg)}
+#mic.on{background:var(--al);color:#fff}
+#msg{margin:10px 0 0;min-height:1.4em;color:var(--mute)}
+ul{margin:8px 0 0;padding-left:20px;color:var(--mute);font-size:.9rem}
+</style></head><body><main>
+<h1>Giám sát nhiệt độ và độ ẩm phòng</h1>
+<div class="c"><div class="g">
+<div><div class="l">Nhiệt độ</div><div class="b" id="t">--</div></div>
+<div><div class="l">Độ ẩm</div><div class="b" id="h">--</div></div></div>
+<span id="st" style="margin-top:12px">Đang kết nối...</span>
+<button id="mute" disabled onclick="pub('cmd/mute')">Tắt chuông</button>
+<button id="unmute" disabled onclick="pub('cmd/unmute')">Bật lại chuông</button></div>
+<div class="c"><div class="l">Ngưỡng nhiệt độ (°C)</div>
+<div class="s"><button onclick="ch('cmd/temp','ti',-1,0,60)">−</button><span id="ti">--</span><button onclick="ch('cmd/temp','ti',1,0,60)">+</button></div></div>
+<div class="c"><div class="l">Ngưỡng độ ẩm (%)</div>
+<div class="s"><button onclick="ch('cmd/humid','hi',-5,0,100)">−</button><span id="hi">--</span><button onclick="ch('cmd/humid','hi',5,0,100)">+</button></div></div>
+<div class="c"><button id="mic">Bấm để nói</button><p id="msg"></p>
+<ul><li>"Đặt ngưỡng nhiệt độ 30"</li><li>"Ngưỡng độ ẩm 70"</li><li>"Tắt chuông" / "Bật lại chuông"</li><li>"Đọc trạng thái"</li></ul></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+/* ===== CẤU HÌNH: PHẢI TRÙNG VỚI ESP32 ===== */
+const PREFIX='cdp-k7x92mq41b-du-an-cuoi-mon';   // đổi thành chuỗi ngẫu nhiên riêng
+const BROKER='wss://broker.hivemq.com:8884/mqtt';
+/* ========================================== */
+const $=i=>document.getElementById(i);
+let hold=0,tm={},last=null,online=false,lastMsg=0;
+
+const client=mqtt.connect(BROKER,{reconnectPeriod:3000});
+client.on('connect',()=>{client.subscribe([PREFIX+'/status',PREFIX+'/online'])});
+client.on('close',()=>{$('st').textContent='Mất kết nối tới server MQTT';$('st').className=''});
+client.on('message',(topic,buf)=>{
+  const s=buf.toString();
+  if(topic.endsWith('/online')){online=(s==='1');if(!online)offline();return}
+  try{last=JSON.parse(s);lastMsg=Date.now();render(last)}catch(e){}
+});
+function pub(p,v){client.publish(PREFIX+'/'+p,String(v??''))}
+function offline(){$('st').textContent='ESP32 đang offline';$('st').className='';$('mute').disabled=true;$('unmute').disabled=true}
+setInterval(()=>{if(lastMsg&&Date.now()-lastMsg>8000)offline()},2000);
+
+function render(d){
+  $('t').textContent=d.temp.toFixed(1)+' °C';$('h').textContent=d.humidity.toFixed(1)+' %';
+  if(Date.now()>hold){$('ti').textContent=Math.round(d.tempThreshold);$('hi').textContent=Math.round(d.humidThreshold)}
+  const s=$('st');
+  if(d.alarm&&d.muted){s.textContent='Vượt ngưỡng (đã tắt chuông)';s.className='mu'}
+  else if(d.alarm){s.textContent='ĐANG BÁO ĐỘNG';s.className='al'}
+  else{s.textContent='Bình thường';s.className='ok'}
+  $('mute').disabled=!(d.alarm&&!d.muted);$('unmute').disabled=!d.muted}
+
+function ch(p,id,step,lo,hi){
+  const v=Math.min(hi,Math.max(lo,parseInt($(id).textContent)+step));if(isNaN(v))return;
+  $(id).textContent=v;hold=Date.now()+4000;clearTimeout(tm[id]);
+  tm[id]=setTimeout(()=>{hold=Date.now()+2500;pub(p,v)},400)}
+
+/* ---- GIỌNG NÓI ---- */
+const W={'không':0,'một':1,'mốt':1,'hai':2,'ba':3,'bốn':4,'tư':4,'năm':5,'lăm':5,'sáu':6,'bảy':7,'tám':8,'chín':9};
+function num(s){const m=s.match(/\d+([.,]\d+)?/);if(m)return parseFloat(m[0].replace(',','.'));
+let c=0,ok=false;for(const x of s.split(/\s+/)){
+if(x==='trăm'){c=(c||1)*100;ok=true}else if(x==='mười'){c+=10;ok=true}
+else if(x==='mươi'){c=(c||1)*10;ok=true}else if(x in W){c+=W[x];ok=true}}
+return ok?c:NaN}
+function say(t){$('msg').textContent=t;
+if('speechSynthesis' in window){const u=new SpeechSynthesisUtterance(t);u.lang='vi-VN';speechSynthesis.cancel();speechSynthesis.speak(u)}}
+function cmd(t){const s=t.toLowerCase(),alarmWord=/chuông|còi|báo động/.test(s);
+if(alarmWord&&s.includes('tắt')){pub('cmd/mute');say('Đã tắt chuông');return}
+if(alarmWord&&s.includes('bật')){pub('cmd/unmute');say('Đã bật lại chuông');return}
+if(s.includes('trạng thái')||s.includes('đọc')){
+if(!last){say('Chưa có dữ liệu');return}
+say('Nhiệt độ '+last.temp.toFixed(1)+' độ, độ ẩm '+last.humidity.toFixed(1)+' phần trăm. '+(last.alarm?'Đang báo động.':'Bình thường.'));return}
+const isT=s.includes('nhiệt'),isH=s.includes('ẩm');
+if(!isT&&!isH){say('Chưa hiểu lệnh: '+t);return}
+const v=num(s),mx=isT?60:100;
+if(isNaN(v)||v<0||v>mx){say('Không nghe rõ con số, hãy nói lại');return}
+hold=Date.now()+2500;$(isT?'ti':'hi').textContent=Math.round(v);
+pub(isT?'cmd/temp':'cmd/humid',v);
+say('Đã đặt ngưỡng '+(isT?'nhiệt độ ':'độ ẩm ')+v)}
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+$('mic').onclick=()=>{
+if(!SR||!window.isSecureContext){$('msg').textContent='Trình duyệt không hỗ trợ nhận dạng giọng nói hoặc trang chưa chạy HTTPS.';return}
+if(rec){rec.stop();return}
+rec=new SR();rec.lang='vi-VN';rec.interimResults=false;
+rec.onstart=()=>{$('mic').classList.add('on');$('mic').textContent='Đang nghe... (bấm để dừng)'};
+rec.onresult=e=>{const t=e.results[0][0].transcript;$('msg').textContent='Bạn nói: '+t;cmd(t)};
+rec.onerror=e=>{$('msg').textContent='Lỗi micro: '+e.error};
+rec.onend=()=>{rec=null;$('mic').classList.remove('on');$('mic').textContent='Bấm để nói'};
+rec.start()};
+</script></body></html>
